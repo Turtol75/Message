@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Private Chat App</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    margin: 0;
+    height: 100vh;
+    background-color: #f5f5f5;
+  }
+
+  #sidebar {
+    width: 250px;
+    background-color: #ffffff;
+    border-right: 1px solid #ccc;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #sidebar h2 {
+    margin-top: 0;
+  }
+
+  #userList {
+    flex-grow: 1;
+    overflow-y: auto;
+    margin-bottom: 10px;
+  }
+
+  #userList div {
+    padding: 10px;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+
+  #userList div:hover {
+    background-color: #e0e0e0;
+  }
+
+  #addUserInput, #addUserBtn {
+    margin-top: 5px;
+    padding: 8px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  #chatSection {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+  }
+
+  #messages {
+    flex-grow: 1;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    padding: 10px;
+    overflow-y: auto;
+    background-color: #fff;
+  }
+
+  .message-bubble {
+    padding: 10px 15px;
+    margin: 5px 0;
+    border-radius: 20px;
+    max-width: 70%;
+    word-wrap: break-word;
+  }
+
+  .message-own {
+    background-color: #4CAF50;
+    color: white;
+    margin-left: auto;
+  }
+
+  .message-other {
+    background-color: #e0e0e0;
+    color: black;
+    margin-right: auto;
+  }
+
+  #messageInput, #sendBtn, #logoutBtn {
+    margin-top: 5px;
+    padding: 8px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  #sendBtn {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    cursor: pointer;
+  }
+
+  #sendBtn:hover {
+    background-color: #45a049;
+  }
+
+</style>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { getDatabase, ref, push, onChildAdded, onChildRemoved, get, set, child } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBNG87htpHqMe3HRM-F9ftl5z01HHiwMJQ",
+  authDomain: "messages-acce7.firebaseapp.com",
+  databaseURL: "https://messages-acce7-default-rtdb.firebaseio.com",
+  projectId: "messages-acce7",
+  storageBucket: "messages-acce7.firebasestorage.app",
+  messagingSenderId: "471730472939",
+  appId: "1:471730472939:web:2c64f611e6a0d96b57bbae",
+  measurementId: "G-B0EZ3WYCRF"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getDatabase(app);
+const analytics = getAnalytics(app);
+
+const sidebar = document.createElement('div');
+const chatSection = document.createElement('div');
+
+let currentChatUser = null;
+let sendBtnHandlerAttached = false;
+
+window.onload = () => {
+  document.body.innerHTML = `<div id='sidebar'><h2>Users</h2><div id='userList'></div><input id='addUserInput' placeholder='Email'><button id='addUserBtn'>Add User</button><button id='logoutBtn'>Logout</button></div><div id='chatSection'><div id='messages'></div><input id='messageInput' placeholder='Type a message'><button id='sendBtn'>Send</button></div>`;
+
+  const userListDiv = document.getElementById('userList');
+  const addUserInput = document.getElementById('addUserInput');
+  const addUserBtn = document.getElementById('addUserBtn');
+  const messagesDiv = document.getElementById('messages');
+  const messageInput = document.getElementById('messageInput');
+  const sendBtn = document.getElementById('sendBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+
+  const loadUsers = (currentEmail) => {
+    userListDiv.innerHTML = '';
+    get(ref(db, 'users')).then(snapshot => {
+      if(snapshot.exists()){
+        Object.keys(snapshot.val()).forEach(emailKey => {
+          if(emailKey !== encodeEmail(currentEmail)){
+            const div = document.createElement('div');
+            div.textContent = snapshot.val()[emailKey].email;
+            div.onclick = () => { currentChatUser = snapshot.val()[emailKey].email; messagesDiv.innerHTML = '';
+              loadMessages(auth.currentUser.email, currentChatUser);
+            };
+            userListDiv.appendChild(div);
+          }
+        });
+      }
+    });
+  };
+
+  const encodeEmail = (email) => email.replace('.', ',');
+
+  const loadMessages = (user1, user2) => {
+    const chatId = encodeEmail(user1) + '_' + encodeEmail(user2);
+    const chatRef = ref(db, 'chats/' + chatId);
+    messagesDiv.innerHTML = '';
+
+    onChildAdded(chatRef, data => {
+      const msg = data.val();
+      const msgElement = document.createElement('div');
+      msgElement.textContent = msg.text;
+      msgElement.classList.add('message-bubble', msg.user === user1 ? 'message-own':'message-other');
+      msgElement.id = data.key;
+      messagesDiv.appendChild(msgElement);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+      setTimeout(()=>{
+        const delRef = ref(db, 'chats/' + chatId + '/' + data.key);
+        delRef.remove().catch(err=>console.error(err));
+      },15000);
+    });
+
+    onChildRemoved(chatRef, data=>{
+      const removedMsg = document.getElementById(data.key);
+      if(removedMsg) removedMsg.remove();
+    });
+
+    sendBtn.onclick = () => {
+      if(!currentChatUser || messageInput.value.trim()==='') return;
+      push(chatRef, { user:user1, text: messageInput.value });
+      messageInput.value='';
+    };
+  };
+
+  addUserBtn.onclick = () => {
+    const newEmail = addUserInput.value.trim();
+    if(!newEmail) return;
+    set(ref(db, 'users/' + encodeEmail(newEmail)), { email: newEmail });
+    addUserInput.value = '';
+    loadUsers(auth.currentUser.email);
+  };
+
+  logoutBtn.onclick = () => {
+    signOut(auth);
+  };
+
+  const loginSection = document.createElement('div');
+  loginSection.innerHTML = `<h2>Login / Sign Up</h2><input id='loginEmail' placeholder='Email'><input id='loginPassword' placeholder='Password' type='password'><button id='loginBtn'>Login</button><button id='signupBtn'>Sign Up</button>`;
+  document.body.appendChild(loginSection);
+
+  const loginEmail = document.getElementById('loginEmail');
+  const loginPassword = document.getElementById('loginPassword');
+  document.getElementById('signupBtn').onclick = () => {
+    createUserWithEmailAndPassword(auth, loginEmail.value, loginPassword.value).catch(err=>alert(err.message));
+  };
+  document.getElementById('loginBtn').onclick = () => {
+    signInWithEmailAndPassword(auth, loginEmail.value, loginPassword.value).catch(err=>alert(err.message));
+  };
+
+  onAuthStateChanged(auth, user=>{
+    if(user){
+      loginSection.style.display='none';
+      document.getElementById('sidebar').style.display='flex';
+      document.getElementById('chatSection').style.display='flex';
+      set(ref(db,'users/'+encodeEmail(user.email)),{email:user.email});
+      loadUsers(user.email);
+    } else {
+      loginSection.style.display='flex';
+      document.getElementById('sidebar').style.display='none';
+      document.getElementById('chatSection').style.display='none';
+    }
+  });
+};
+</script>
+</head>
+<body>
+</body>
+</html>
